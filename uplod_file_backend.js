@@ -123,10 +123,169 @@
 
 
 
+// const { createClient } = require('@supabase/supabase-js');
+// const fs = require('fs');
+// const path = require('path');
+// const csv = require('csv-parser');
+// const dotenv = require('dotenv');
+
+// dotenv.config();
+
+// const fetch = require('cross-fetch');
+// const supabase = createClient(
+//     process.env.SUPABASE_URL,
+//     process.env.SUPABASE_ANON_KEY,
+//     {
+//         auth: {
+//             persistSession: false
+//         },
+//         global: {
+//             fetch: fetch
+//         }
+//     }
+// );
+
+// const parseIntOrNull = (val) => {
+//     if (val === null || val === undefined || val === "" || val === "NULL") return null;
+//     const n = parseInt(val, 10);
+//     return isNaN(n) ? null : n;
+// };
+
+// const handleFileUpload = async (file) => {
+//     let filePath = null;
+    
+//     try {
+//         console.log('File received:', {
+//             name: file.name,
+//             size: file.size,
+//             mimetype: file.mimetype
+//         });
+
+//         if (!file || !file.data) {
+//             throw new Error('Invalid file or empty file received');
+//         }
+
+//         // Save file to temp location
+//         filePath = path.join('/tmp', `${Date.now()}_${file.name}`);
+//         await file.mv(filePath);
+//         console.log('File saved to:', filePath);
+
+//         let rowCount = 0;
+//         let insertedCount = 0;
+//         const batchSize = 500; // Smaller batch for safety
+//         let batch = [];
+
+//         return new Promise((resolve, reject) => {
+//             // Use streaming CSV parser
+//             fs.createReadStream(filePath)
+//                 .pipe(csv())
+//                 .on('data', async (row) => {
+//                     try {
+//                         rowCount++;
+                        
+//                         const obj = {
+//                             dept: row.dept || null,
+//                             degree: row.degree || null,
+//                             ug_or_pg: row.ug_or_pg || null,
+//                             arts_or_engg: row.arts_or_engg || null,
+//                             short_form: row.short_form || null,
+//                             batch: row.batch || null,
+//                             sec: row.sec || null,
+//                             course_code: row.course_code || null,
+//                             course_name: row.course_name || null,
+//                             staff_id: row.staff_id || null,
+//                             staffid: row.staffid || null,
+//                             faculty_name: row.faculty_name || null,
+//                             mobile_no: row.mobile_no || null,
+//                             grp: row.grp === 'NULL' ? null : row.grp,
+//                             comment: row.comment || null
+//                         };
+
+//                         // Handle qn1 to qn35
+//                         for (let j = 1; j <= 35; j++) {
+//                             const val = row[`qn${j}`];
+//                             obj[`qn${j}`] = val === 'NULL' ? null : parseIntOrNull(val);
+//                         }
+
+//                         batch.push(obj);
+
+//                         // Insert batch when reached size or end of stream
+//                         if (batch.length >= batchSize) {
+//                             const currentBatch = batch;
+//                             batch = [];
+
+//                             console.log(`Inserting batch: rows ${rowCount - currentBatch.length + 1} to ${rowCount}`);
+                            
+//                             const { error } = await supabase
+//                                 .from('course_feedback')
+//                                 .insert(currentBatch);
+
+//                             if (error) throw error;
+//                             insertedCount += currentBatch.length;
+//                         }
+//                     } catch (error) {
+//                         reject(error);
+//                     }
+//                 })
+//                 .on('end', async () => {
+//                     try {
+//                         // Insert remaining records
+//                         if (batch.length > 0) {
+//                             console.log(`Inserting final batch of ${batch.length} records...`);
+//                             const { error } = await supabase
+//                                 .from('course_feedback')
+//                                 .insert(batch);
+
+//                             if (error) throw error;
+//                             insertedCount += batch.length;
+//                         }
+
+//                         // Clean up temp file
+//                         if (filePath && fs.existsSync(filePath)) {
+//                             fs.unlinkSync(filePath);
+//                         }
+
+//                         console.log(`Upload complete: ${insertedCount} records inserted out of ${rowCount} rows`);
+//                         resolve({
+//                             success: true,
+//                             message: `Successfully uploaded ${insertedCount} records`,
+//                             count: insertedCount,
+//                             totalRows: rowCount
+//                         });
+//                     } catch (error) {
+//                         reject(error);
+//                     }
+//                 })
+//                 .on('error', (error) => {
+//                     reject(error);
+//                 });
+//         });
+
+//     } catch (error) {
+//         console.error('Error:', error);
+        
+//         // Clean up on error
+//         if (filePath && fs.existsSync(filePath)) {
+//             fs.unlinkSync(filePath);
+//         }
+
+//         return {
+//             success: false,
+//             message: error.message || 'Upload failed',
+//             error: error.message
+//         };
+//     }
+// };
+
+// module.exports = { handleFileUpload };
+
+
+
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
+const XLSX = require('xlsx');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -151,8 +310,26 @@ const parseIntOrNull = (val) => {
     return isNaN(n) ? null : n;
 };
 
+// Convert XLSX to CSV
+const convertXlsxToCsv = (xlsxFilePath, csvFilePath) => {
+    try {
+        console.log('Converting XLSX to CSV...');
+        const workbook = XLSX.readFile(xlsxFilePath);
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const csv = XLSX.utils.sheet_to_csv(sheet);
+        
+        fs.writeFileSync(csvFilePath, csv);
+        console.log('XLSX converted to CSV successfully');
+        return csvFilePath;
+    } catch (error) {
+        console.error('Error converting XLSX to CSV:', error);
+        throw error;
+    }
+};
+
 const handleFileUpload = async (file) => {
-    let filePath = null;
+    let xlsxFilePath = null;
+    let csvFilePath = null;
     
     try {
         console.log('File received:', {
@@ -165,19 +342,32 @@ const handleFileUpload = async (file) => {
             throw new Error('Invalid file or empty file received');
         }
 
+        const fileName = file.name;
+        const isXlsx = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+        
         // Save file to temp location
-        filePath = path.join('/tmp', `${Date.now()}_${file.name}`);
-        await file.mv(filePath);
-        console.log('File saved to:', filePath);
+        if (isXlsx) {
+            xlsxFilePath = path.join('/tmp', `${Date.now()}_${fileName}`);
+            await file.mv(xlsxFilePath);
+            console.log('XLSX file saved to:', xlsxFilePath);
+            
+            // Convert to CSV
+            csvFilePath = path.join('/tmp', `${Date.now()}_converted.csv`);
+            convertXlsxToCsv(xlsxFilePath, csvFilePath);
+        } else {
+            csvFilePath = path.join('/tmp', `${Date.now()}_${fileName}`);
+            await file.mv(csvFilePath);
+            console.log('CSV file saved to:', csvFilePath);
+        }
 
         let rowCount = 0;
         let insertedCount = 0;
-        const batchSize = 500; // Smaller batch for safety
+        const batchSize = 500;
         let batch = [];
 
         return new Promise((resolve, reject) => {
             // Use streaming CSV parser
-            fs.createReadStream(filePath)
+            fs.createReadStream(csvFilePath)
                 .pipe(csv())
                 .on('data', async (row) => {
                     try {
@@ -209,7 +399,7 @@ const handleFileUpload = async (file) => {
 
                         batch.push(obj);
 
-                        // Insert batch when reached size or end of stream
+                        // Insert batch when reached size
                         if (batch.length >= batchSize) {
                             const currentBatch = batch;
                             batch = [];
@@ -240,9 +430,12 @@ const handleFileUpload = async (file) => {
                             insertedCount += batch.length;
                         }
 
-                        // Clean up temp file
-                        if (filePath && fs.existsSync(filePath)) {
-                            fs.unlinkSync(filePath);
+                        // Clean up temp files
+                        if (csvFilePath && fs.existsSync(csvFilePath)) {
+                            fs.unlinkSync(csvFilePath);
+                        }
+                        if (xlsxFilePath && fs.existsSync(xlsxFilePath)) {
+                            fs.unlinkSync(xlsxFilePath);
                         }
 
                         console.log(`Upload complete: ${insertedCount} records inserted out of ${rowCount} rows`);
@@ -265,8 +458,11 @@ const handleFileUpload = async (file) => {
         console.error('Error:', error);
         
         // Clean up on error
-        if (filePath && fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+        if (csvFilePath && fs.existsSync(csvFilePath)) {
+            fs.unlinkSync(csvFilePath);
+        }
+        if (xlsxFilePath && fs.existsSync(xlsxFilePath)) {
+            fs.unlinkSync(xlsxFilePath);
         }
 
         return {
@@ -278,6 +474,3 @@ const handleFileUpload = async (file) => {
 };
 
 module.exports = { handleFileUpload };
-
-
-
