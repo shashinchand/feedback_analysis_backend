@@ -285,7 +285,8 @@ const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
-const XLSX = require('xlsx');
+const { createReadStream, createWriteStream } = require('fs');
+const ExcelJS = require('exceljs');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -310,21 +311,54 @@ const parseIntOrNull = (val) => {
     return isNaN(n) ? null : n;
 };
 
-// Convert XLSX to CSV
-const convertXlsxToCsv = (xlsxFilePath, csvFilePath) => {
-    try {
-        console.log('Converting XLSX to CSV...');
-        const workbook = XLSX.readFile(xlsxFilePath);
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const csv = XLSX.utils.sheet_to_csv(sheet);
-        
-        fs.writeFileSync(csvFilePath, csv);
-        console.log('XLSX converted to CSV successfully');
-        return csvFilePath;
-    } catch (error) {
-        console.error('Error converting XLSX to CSV:', error);
-        throw error;
-    }
+// Convert XLSX to CSV using streaming
+const convertXlsxToCsvStream = async (xlsxFilePath, csvFilePath) => {
+    return new Promise(async (resolve, reject) => {
+        try {
+            console.log('Converting XLSX to CSV (streaming)...');
+            
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.readFile(xlsxFilePath);
+            
+            const worksheet = workbook.worksheets[0];
+            const csvStream = createWriteStream(csvFilePath);
+            
+            let isFirstRow = true;
+            let rowCount = 0;
+            
+            worksheet.eachRow((row, rowNumber) => {
+                const values = row.values.slice(1); // Remove first empty element
+                const csvLine = values.map(val => {
+                    if (val === null || val === undefined) return '';
+                    const str = String(val);
+                    // Escape quotes and wrap in quotes if needed
+                    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                        return `"${str.replace(/"/g, '""')}"`;
+                    }
+                    return str;
+                }).join(',');
+                
+                csvStream.write(csvLine + '\n');
+                rowCount++;
+                
+                if (rowCount % 1000 === 0) {
+                    console.log(`Converted ${rowCount} rows...`);
+                }
+            });
+            
+            csvStream.on('finish', () => {
+                console.log(`XLSX converted to CSV successfully (${rowCount} rows)`);
+                resolve(csvFilePath);
+            });
+            
+            csvStream.on('error', reject);
+            csvStream.end();
+            
+        } catch (error) {
+            console.error('Error converting XLSX to CSV:', error);
+            reject(error);
+        }
+    });
 };
 
 const handleFileUpload = async (file) => {
@@ -351,9 +385,9 @@ const handleFileUpload = async (file) => {
             await file.mv(xlsxFilePath);
             console.log('XLSX file saved to:', xlsxFilePath);
             
-            // Convert to CSV
+            // Convert to CSV using streaming
             csvFilePath = path.join('/tmp', `${Date.now()}_converted.csv`);
-            convertXlsxToCsv(xlsxFilePath, csvFilePath);
+            await convertXlsxToCsvStream(xlsxFilePath, csvFilePath);
         } else {
             csvFilePath = path.join('/tmp', `${Date.now()}_${fileName}`);
             await file.mv(csvFilePath);
@@ -367,7 +401,7 @@ const handleFileUpload = async (file) => {
 
         return new Promise((resolve, reject) => {
             // Use streaming CSV parser
-            fs.createReadStream(csvFilePath)
+            createReadStream(csvFilePath)
                 .pipe(csv())
                 .on('data', async (row) => {
                     try {
