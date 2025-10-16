@@ -284,7 +284,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -328,91 +328,90 @@ const handleFileUpload = async (file) => {
         await file.mv(filePath);
         console.log('File saved to:', filePath);
 
-        // Read workbook with option to stream
-        const workbook = XLSX.readFile(filePath, { 
-            type: 'file',
-            cellFormula: false,
-            cellHTML: false,
-            cellNF: false,
-            cellStyles: false
-        });
+        // Use ExcelJS with streaming
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(filePath);
 
-        console.log('Workbook sheets:', workbook.SheetNames);
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-
-        // Get dimensions to know how many rows
-        const range = XLSX.utils.decode_range(worksheet['!ref']);
-        const rowCount = range.e.r + 1;
-        
-        console.log(`Processing ${rowCount} rows from sheet: ${sheetName}`);
+        const worksheet = workbook.worksheets[0];
+        console.log('Processing worksheet:', worksheet.name);
 
         let insertedCount = 0;
-        const batchSize = 500;
+        const batchSize = 300;
         let batch = [];
-        let processedRows = 0;
+        let rowNum = 0;
 
-        // Process worksheet row by row instead of converting all at once
-        for (let rowNum = 1; rowNum < rowCount; rowNum++) {
-            const row = {};
-            
-            // Extract cell values for this row
-            for (let col = range.s.c; col <= range.e.c; col++) {
-                const cell = worksheet[XLSX.utils.encode_cell({ r: rowNum, c: col })];
-                const headerCell = worksheet[XLSX.utils.encode_cell({ r: 0, c: col })];
-                
-                if (headerCell) {
-                    const header = headerCell.v;
-                    row[header] = cell ? cell.v : null;
+        // Get headers from first row
+        const headerRow = worksheet.getRow(1);
+        const headers = [];
+        headerRow.eachCell((cell, colNumber) => {
+            headers[colNumber] = cell.value;
+        });
+
+        console.log('Headers:', headers);
+
+        // Process rows starting from row 2 (skip header)
+        worksheet.eachRow(async (row, rowNumber) => {
+            if (rowNumber === 1) return; // Skip header row
+
+            try {
+                rowNum++;
+                const rowData = {};
+
+                // Extract cell values
+                row.eachCell((cell, colNumber) => {
+                    const header = headers[colNumber];
+                    if (header) {
+                        rowData[header] = cell.value;
+                    }
+                });
+
+                const obj = {
+                    dept: rowData.dept || null,
+                    degree: rowData.degree || null,
+                    ug_or_pg: rowData.ug_or_pg || null,
+                    arts_or_engg: rowData.arts_or_engg || null,
+                    short_form: rowData.short_form || null,
+                    batch: rowData.batch || null,
+                    sec: rowData.sec || null,
+                    course_code: rowData.course_code || null,
+                    course_name: rowData.course_name || null,
+                    staff_id: rowData.staff_id || null,
+                    staffid: rowData.staffid || null,
+                    faculty_name: rowData.faculty_name || null,
+                    mobile_no: rowData.mobile_no || null,
+                    grp: rowData.grp === 'NULL' ? null : rowData.grp,
+                    comment: rowData.comment || null
+                };
+
+                // Handle qn1 to qn35
+                for (let j = 1; j <= 35; j++) {
+                    const val = rowData[`qn${j}`];
+                    obj[`qn${j}`] = val === 'NULL' ? null : parseIntOrNull(val);
                 }
+
+                batch.push(obj);
+
+                // Insert batch when reached size
+                if (batch.length >= batchSize) {
+                    const currentBatch = batch;
+                    batch = [];
+
+                    console.log(`Inserting batch: rows ${rowNum - currentBatch.length + 1} to ${rowNum}`);
+                    
+                    const { error } = await supabase
+                        .from('course_feedback')
+                        .insert(currentBatch);
+
+                    if (error) {
+                        throw error;
+                    }
+                    insertedCount += currentBatch.length;
+                }
+            } catch (error) {
+                console.error('Error processing row:', error);
+                throw error;
             }
-
-            processedRows++;
-
-            const obj = {
-                dept: row.dept || null,
-                degree: row.degree || null,
-                ug_or_pg: row.ug_or_pg || null,
-                arts_or_engg: row.arts_or_engg || null,
-                short_form: row.short_form || null,
-                batch: row.batch || null,
-                sec: row.sec || null,
-                course_code: row.course_code || null,
-                course_name: row.course_name || null,
-                staff_id: row.staff_id || null,
-                staffid: row.staffid || null,
-                faculty_name: row.faculty_name || null,
-                mobile_no: row.mobile_no || null,
-                grp: row.grp === 'NULL' ? null : row.grp,
-                comment: row.comment || null
-            };
-
-            // Handle qn1 to qn35
-            for (let j = 1; j <= 35; j++) {
-                const val = row[`qn${j}`];
-                obj[`qn${j}`] = val === 'NULL' ? null : parseIntOrNull(val);
-            }
-
-            batch.push(obj);
-
-            // Insert batch when reached size
-            if (batch.length >= batchSize) {
-                const currentBatch = batch;
-                batch = [];
-
-                console.log(`Inserting batch: rows ${processedRows - currentBatch.length + 1} to ${processedRows}`);
-                
-                const { error } = await supabase
-                    .from('course_feedback')
-                    .insert(currentBatch);
-
-                if (error) throw error;
-                insertedCount += currentBatch.length;
-
-                // Free memory
-                currentBatch.length = 0;
-            }
-        }
+        });
 
         // Insert remaining records
         if (batch.length > 0) {
@@ -430,12 +429,12 @@ const handleFileUpload = async (file) => {
             fs.unlinkSync(filePath);
         }
 
-        console.log(`Upload complete: ${insertedCount} records inserted out of ${processedRows} rows`);
+        console.log(`Upload complete: ${insertedCount} records inserted out of ${rowNum} rows`);
         return {
             success: true,
             message: `Successfully uploaded ${insertedCount} records`,
             count: insertedCount,
-            totalRows: processedRows
+            totalRows: rowNum
         };
 
     } catch (error) {
