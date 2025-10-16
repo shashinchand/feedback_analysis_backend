@@ -123,10 +123,168 @@
 
 
 
+// const { createClient } = require('@supabase/supabase-js');
+// const fs = require('fs');
+// const path = require('path');
+// const csv = require('csv-parser');
+// const dotenv = require('dotenv');
+
+// dotenv.config();
+
+// const fetch = require('cross-fetch');
+// const supabase = createClient(
+//     process.env.SUPABASE_URL,
+//     process.env.SUPABASE_ANON_KEY,
+//     {
+//         auth: {
+//             persistSession: false
+//         },
+//         global: {
+//             fetch: fetch
+//         }
+//     }
+// );
+
+// const parseIntOrNull = (val) => {
+//     if (val === null || val === undefined || val === "" || val === "NULL") return null;
+//     const n = parseInt(val, 10);
+//     return isNaN(n) ? null : n;
+// };
+
+// const handleFileUpload = async (file) => {
+//     let filePath = null;
+    
+//     try {
+//         console.log('File received:', {
+//             name: file.name,
+//             size: file.size,
+//             mimetype: file.mimetype
+//         });
+
+//         if (!file || !file.data) {
+//             throw new Error('Invalid file or empty file received');
+//         }
+
+//         // Save file to temp location
+//         filePath = path.join('/tmp', `${Date.now()}_${file.name}`);
+//         await file.mv(filePath);
+//         console.log('File saved to:', filePath);
+
+//         let rowCount = 0;
+//         let insertedCount = 0;
+//         const batchSize = 500; // Smaller batch for safety
+//         let batch = [];
+
+//         return new Promise((resolve, reject) => {
+//             // Use streaming CSV parser
+//             fs.createReadStream(filePath)
+//                 .pipe(csv())
+//                 .on('data', async (row) => {
+//                     try {
+//                         rowCount++;
+                        
+//                         const obj = {
+//                             dept: row.dept || null,
+//                             degree: row.degree || null,
+//                             ug_or_pg: row.ug_or_pg || null,
+//                             arts_or_engg: row.arts_or_engg || null,
+//                             short_form: row.short_form || null,
+//                             batch: row.batch || null,
+//                             sec: row.sec || null,
+//                             course_code: row.course_code || null,
+//                             course_name: row.course_name || null,
+//                             staff_id: row.staff_id || null,
+//                             staffid: row.staffid || null,
+//                             faculty_name: row.faculty_name || null,
+//                             mobile_no: row.mobile_no || null,
+//                             grp: row.grp === 'NULL' ? null : row.grp,
+//                             comment: row.comment || null
+//                         };
+
+//                         // Handle qn1 to qn35
+//                         for (let j = 1; j <= 35; j++) {
+//                             const val = row[`qn${j}`];
+//                             obj[`qn${j}`] = val === 'NULL' ? null : parseIntOrNull(val);
+//                         }
+
+//                         batch.push(obj);
+
+//                         // Insert batch when reached size or end of stream
+//                         if (batch.length >= batchSize) {
+//                             const currentBatch = batch;
+//                             batch = [];
+
+//                             console.log(`Inserting batch: rows ${rowCount - currentBatch.length + 1} to ${rowCount}`);
+                            
+//                             const { error } = await supabase
+//                                 .from('course_feedback')
+//                                 .insert(currentBatch);
+
+//                             if (error) throw error;
+//                             insertedCount += currentBatch.length;
+//                         }
+//                     } catch (error) {
+//                         reject(error);
+//                     }
+//                 })
+//                 .on('end', async () => {
+//                     try {
+//                         // Insert remaining records
+//                         if (batch.length > 0) {
+//                             console.log(`Inserting final batch of ${batch.length} records...`);
+//                             const { error } = await supabase
+//                                 .from('course_feedback')
+//                                 .insert(batch);
+
+//                             if (error) throw error;
+//                             insertedCount += batch.length;
+//                         }
+
+//                         // Clean up temp file
+//                         if (filePath && fs.existsSync(filePath)) {
+//                             fs.unlinkSync(filePath);
+//                         }
+
+//                         console.log(`Upload complete: ${insertedCount} records inserted out of ${rowCount} rows`);
+//                         resolve({
+//                             success: true,
+//                             message: `Successfully uploaded ${insertedCount} records`,
+//                             count: insertedCount,
+//                             totalRows: rowCount
+//                         });
+//                     } catch (error) {
+//                         reject(error);
+//                     }
+//                 })
+//                 .on('error', (error) => {
+//                     reject(error);
+//                 });
+//         });
+
+//     } catch (error) {
+//         console.error('Error:', error);
+        
+//         // Clean up on error
+//         if (filePath && fs.existsSync(filePath)) {
+//             fs.unlinkSync(filePath);
+//         }
+
+//         return {
+//             success: false,
+//             message: error.message || 'Upload failed',
+//             error: error.message
+//         };
+//     }
+// };
+
+// module.exports = { handleFileUpload };
+
+
+
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
-const csv = require('csv-parser');
+const XLSX = require('xlsx');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -170,96 +328,115 @@ const handleFileUpload = async (file) => {
         await file.mv(filePath);
         console.log('File saved to:', filePath);
 
-        let rowCount = 0;
-        let insertedCount = 0;
-        const batchSize = 500; // Smaller batch for safety
-        let batch = [];
-
-        return new Promise((resolve, reject) => {
-            // Use streaming CSV parser
-            fs.createReadStream(filePath)
-                .pipe(csv())
-                .on('data', async (row) => {
-                    try {
-                        rowCount++;
-                        
-                        const obj = {
-                            dept: row.dept || null,
-                            degree: row.degree || null,
-                            ug_or_pg: row.ug_or_pg || null,
-                            arts_or_engg: row.arts_or_engg || null,
-                            short_form: row.short_form || null,
-                            batch: row.batch || null,
-                            sec: row.sec || null,
-                            course_code: row.course_code || null,
-                            course_name: row.course_name || null,
-                            staff_id: row.staff_id || null,
-                            staffid: row.staffid || null,
-                            faculty_name: row.faculty_name || null,
-                            mobile_no: row.mobile_no || null,
-                            grp: row.grp === 'NULL' ? null : row.grp,
-                            comment: row.comment || null
-                        };
-
-                        // Handle qn1 to qn35
-                        for (let j = 1; j <= 35; j++) {
-                            const val = row[`qn${j}`];
-                            obj[`qn${j}`] = val === 'NULL' ? null : parseIntOrNull(val);
-                        }
-
-                        batch.push(obj);
-
-                        // Insert batch when reached size or end of stream
-                        if (batch.length >= batchSize) {
-                            const currentBatch = batch;
-                            batch = [];
-
-                            console.log(`Inserting batch: rows ${rowCount - currentBatch.length + 1} to ${rowCount}`);
-                            
-                            const { error } = await supabase
-                                .from('course_feedback')
-                                .insert(currentBatch);
-
-                            if (error) throw error;
-                            insertedCount += currentBatch.length;
-                        }
-                    } catch (error) {
-                        reject(error);
-                    }
-                })
-                .on('end', async () => {
-                    try {
-                        // Insert remaining records
-                        if (batch.length > 0) {
-                            console.log(`Inserting final batch of ${batch.length} records...`);
-                            const { error } = await supabase
-                                .from('course_feedback')
-                                .insert(batch);
-
-                            if (error) throw error;
-                            insertedCount += batch.length;
-                        }
-
-                        // Clean up temp file
-                        if (filePath && fs.existsSync(filePath)) {
-                            fs.unlinkSync(filePath);
-                        }
-
-                        console.log(`Upload complete: ${insertedCount} records inserted out of ${rowCount} rows`);
-                        resolve({
-                            success: true,
-                            message: `Successfully uploaded ${insertedCount} records`,
-                            count: insertedCount,
-                            totalRows: rowCount
-                        });
-                    } catch (error) {
-                        reject(error);
-                    }
-                })
-                .on('error', (error) => {
-                    reject(error);
-                });
+        // Read workbook with option to stream
+        const workbook = XLSX.readFile(filePath, { 
+            type: 'file',
+            cellFormula: false,
+            cellHTML: false,
+            cellNF: false,
+            cellStyles: false
         });
+
+        console.log('Workbook sheets:', workbook.SheetNames);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+
+        // Get dimensions to know how many rows
+        const range = XLSX.utils.decode_range(worksheet['!ref']);
+        const rowCount = range.e.r + 1;
+        
+        console.log(`Processing ${rowCount} rows from sheet: ${sheetName}`);
+
+        let insertedCount = 0;
+        const batchSize = 500;
+        let batch = [];
+        let processedRows = 0;
+
+        // Process worksheet row by row instead of converting all at once
+        for (let rowNum = 1; rowNum < rowCount; rowNum++) {
+            const row = {};
+            
+            // Extract cell values for this row
+            for (let col = range.s.c; col <= range.e.c; col++) {
+                const cell = worksheet[XLSX.utils.encode_cell({ r: rowNum, c: col })];
+                const headerCell = worksheet[XLSX.utils.encode_cell({ r: 0, c: col })];
+                
+                if (headerCell) {
+                    const header = headerCell.v;
+                    row[header] = cell ? cell.v : null;
+                }
+            }
+
+            processedRows++;
+
+            const obj = {
+                dept: row.dept || null,
+                degree: row.degree || null,
+                ug_or_pg: row.ug_or_pg || null,
+                arts_or_engg: row.arts_or_engg || null,
+                short_form: row.short_form || null,
+                batch: row.batch || null,
+                sec: row.sec || null,
+                course_code: row.course_code || null,
+                course_name: row.course_name || null,
+                staff_id: row.staff_id || null,
+                staffid: row.staffid || null,
+                faculty_name: row.faculty_name || null,
+                mobile_no: row.mobile_no || null,
+                grp: row.grp === 'NULL' ? null : row.grp,
+                comment: row.comment || null
+            };
+
+            // Handle qn1 to qn35
+            for (let j = 1; j <= 35; j++) {
+                const val = row[`qn${j}`];
+                obj[`qn${j}`] = val === 'NULL' ? null : parseIntOrNull(val);
+            }
+
+            batch.push(obj);
+
+            // Insert batch when reached size
+            if (batch.length >= batchSize) {
+                const currentBatch = batch;
+                batch = [];
+
+                console.log(`Inserting batch: rows ${processedRows - currentBatch.length + 1} to ${processedRows}`);
+                
+                const { error } = await supabase
+                    .from('course_feedback')
+                    .insert(currentBatch);
+
+                if (error) throw error;
+                insertedCount += currentBatch.length;
+
+                // Free memory
+                currentBatch.length = 0;
+            }
+        }
+
+        // Insert remaining records
+        if (batch.length > 0) {
+            console.log(`Inserting final batch of ${batch.length} records...`);
+            const { error } = await supabase
+                .from('course_feedback')
+                .insert(batch);
+
+            if (error) throw error;
+            insertedCount += batch.length;
+        }
+
+        // Clean up temp file
+        if (filePath && fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        console.log(`Upload complete: ${insertedCount} records inserted out of ${processedRows} rows`);
+        return {
+            success: true,
+            message: `Successfully uploaded ${insertedCount} records`,
+            count: insertedCount,
+            totalRows: processedRows
+        };
 
     } catch (error) {
         console.error('Error:', error);
